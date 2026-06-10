@@ -3,12 +3,12 @@ name: PR CI
 on:
   push:
     branches:
-      - feature/**
+      - feature/*
     paths:
       - backend/**
   pull_request:
     branches:
-      - feature/**
+      - feature/*
     paths:
       - backend/**
 
@@ -19,6 +19,9 @@ jobs:
     defaults:
       run:
         working-directory: backend
+
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
 
     steps:
       - name: Checkout repository
@@ -38,6 +41,9 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: pnpm prisma generate
 
       - name: Validate Prisma schema
         run: pnpm prisma validate
