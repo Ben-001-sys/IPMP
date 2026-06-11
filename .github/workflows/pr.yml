@@ -13,7 +13,7 @@ on:
       - backend/**
 
 jobs:
-  backend-ci:
+  pr-ci:
     runs-on: ubuntu-latest
 
     defaults:

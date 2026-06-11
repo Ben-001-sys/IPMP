@@ -1,19 +1,19 @@
-﻿name: Backend CI
+name: Staging CI
 
 on:
   push:
     branches:
-      - main
+      - develop
     paths:
       - backend/**
   pull_request:
     branches:
-      - main
+      - develop
     paths:
       - backend/**
 
 jobs:
-  backend-ci:
+  staging-ci:
     runs-on: ubuntu-latest
 
     defaults:
@@ -21,9 +21,9 @@ jobs:
         working-directory: backend
 
     environment:
-        name: production
+        name: staging
     env:
-      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL}}
 
     steps:
       - name: Checkout repository
