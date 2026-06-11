@@ -5,15 +5,42 @@ on:
     branches:
       - develop
     paths:
-      - backend/**
+      - "backend/**"
+
   pull_request:
     branches:
       - develop
     paths:
-      - backend/**
+      - "backend/**"
 
 jobs:
+  secret-scan:
+    name: Secret Detection (Gitleaks)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          args: detect --source . --redact --exit-code 1
+
+      - name: Upload Gitleaks report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gitleaks-report
+          path: results.sarif
+          retention-days: 30
+
   staging-ci:
+    needs: secret-scan
     runs-on: ubuntu-latest
 
     defaults:
@@ -21,9 +48,10 @@ jobs:
         working-directory: backend
 
     environment:
-        name: staging
+      name: staging
+
     env:
-      DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL}}
+      DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
 
     steps:
       - name: Checkout repository
@@ -45,10 +73,10 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       # ─────────────────────────────────────────
-      # DATABASE MIGRATIONS (NEW - IMPORTANT)
+      # DATABASE MIGRATIONS (OPTIONAL)
       # ─────────────────────────────────────────
-    #   - name: Run Prisma migrations
-    #     run: pnpm prisma migrate deploy
+      # - name: Run Prisma migrations
+      #   run: pnpm prisma migrate deploy
 
       - name: Generate Prisma client
         run: pnpm prisma generate
