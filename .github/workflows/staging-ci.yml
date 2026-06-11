@@ -39,8 +39,29 @@ jobs:
           path: results.sarif
           retention-days: 30
 
-  staging-ci:
+  sast-scan:
+    name: Static Analysis
+    runs-on: ubuntu-latest
     needs: secret-scan
+
+    container:
+      image: semgrep/semgrep
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Semgrep
+        run: |
+          semgrep \
+            --config p/security-audit \
+            --config p/nodejs \
+            backend/src
+
+  staging-ci:
+    needs:
+      - secret-scan
+      - sast-scan
+
     runs-on: ubuntu-latest
 
     defaults:
@@ -71,12 +92,6 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-
-      # ─────────────────────────────────────────
-      # DATABASE MIGRATIONS (OPTIONAL)
-      # ─────────────────────────────────────────
-      # - name: Run Prisma migrations
-      #   run: pnpm prisma migrate deploy
 
       - name: Generate Prisma client
         run: pnpm prisma generate
