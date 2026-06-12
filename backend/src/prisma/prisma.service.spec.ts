@@ -4,12 +4,12 @@ import { PrismaService } from './prisma.service';
 describe('PrismaService', () => {
   let service: PrismaService;
 
-  beforeEach(async () => {
+  beforeEach(async () =>  {
     const module: TestingModule = await Test.createTestingModule({
       providers: [PrismaService],
     }).compile();
 
-    service = module.get<PrismaService>(PrismaService);
+    service =  module.get<PrismaService>(PrismaService);
   });
 
   it('should be defined', () => {
