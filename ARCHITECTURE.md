@@ -2,7 +2,7 @@
 
 ## Project Name
 
-Inventory & Pricing Management Platform (IPMP)
+Inventory & Pricing Management Platform (IPMP)   
 
 ---
 
