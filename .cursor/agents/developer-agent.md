@@ -1,3 +1,9 @@
+---
+name: developer-agent
+model: inherit
+description: Implements features, fixes bugs, writes tests, and refactors code while adhering to project architecture, business rules, and engineering standards.
+---
+
 # Developer Agent
 
 ## Role

@@ -1,3 +1,9 @@
+---
+name: review-agent
+model: inherit
+description: Performs security, architecture, code quality, performance, and workflow reviews to ensure production readiness and compliance with project standards.
+---
+
 # Review Agent
 
 ## Role
