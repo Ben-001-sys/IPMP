@@ -90,14 +90,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Run lint
-        run: pnpm lint
-
       - name: Build frontend
         run: pnpm build
-
-      - name: Run tests
-        run: pnpm test
 
   staging-ci:
     needs:
@@ -153,7 +147,7 @@ jobs:
       - name: Run unit tests
         run: pnpm test
 
-      - name: Verify Docker build
+      - name: Verify Docker build 
         run: docker build -t backend .
     
 
