@@ -13,12 +13,15 @@ on:
       - backend/**
 
 jobs:
-  backend-ci:
+  pr-ci:
     runs-on: ubuntu-latest
 
     defaults:
       run:
         working-directory: backend
+
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
 
     steps:
       - name: Checkout repository

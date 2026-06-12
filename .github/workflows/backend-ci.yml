@@ -1,4 +1,4 @@
-﻿name: Backend CI
+﻿name: Production CI
 
 on:
   push:
@@ -13,13 +13,15 @@ on:
       - backend/**
 
 jobs:
-  backend-ci:
+  production-ci:
     runs-on: ubuntu-latest
 
     defaults:
       run:
         working-directory: backend
 
+    environment:
+        name: production
     env:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
 
@@ -45,8 +47,8 @@ jobs:
       # ─────────────────────────────────────────
       # DATABASE MIGRATIONS (NEW - IMPORTANT)
       # ─────────────────────────────────────────
-      # - name: Run Prisma migrations
-      #   run: pnpm prisma migrate deploy
+      - name: Run Prisma migrations
+        run: pnpm prisma migrate deploy
 
       - name: Generate Prisma client
         run: pnpm prisma generate

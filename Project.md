@@ -1,283 +1,329 @@
-# Inventory & Pricing Management Platform — Project Scope
+# IPMP - Project Overview
 
-## Project Overview
+## Project Name
 
-IPMP digitizes internal inventory and pricing operations using **workflow lists** and a **product catalog master**. Procurement staff build daily lists, move items forward with full history, and inventory staff verify acquired stock.
-
-This document reflects the **implemented backend** as of June 2026, including the lightweight naming model for sources, requested-by, and stock-owner fields.
+Inventory & Pricing Management Platform (IPMP)
 
 ---
 
-## Domain Model
+# Purpose
 
-```txt
-Product (catalog)
-    ↓
-WorkflowList (PROCUREMENT | PURCHASE | ACQUIRED)
-    ↓
-ListItem (qty, pricing, status, lineage)
-    ├── ListItemParty[] (name + role)
-    └── parentItemId → lineage chain
-```
+IPMP is a business operations platform designed to manage the complete lifecycle of products across multiple departments.
 
-### Product
+The system centralizes procurement, inventory, merchandising, pricing, sales support, and operational workflows into a single source of truth.
 
-Master data only: `sku`, `name`, `imageUrl`, `categoryId`, `procurementType`, `productDetails`, `description`, `unit`.
-
-No workflow status, quantity, or pricing on the product row.
-
-### ListItem
-
-Workflow context for one product on one list:
-
-- Pricing: `quantity`, `costPrice`, `regularPrice`, `salesPrice`, `minimum20`, `minimum4`, `finalSellingPrice`
-- Status: `ACTIVE` | `REMOVED` | `VERIFIED`
-- Lineage: `parentItemId` (copy-on-move, never delete upstream rows)
-- Parties: multiple names per role (see below)
-
-### ListItemParty (lightweight names)
-
-Unified storage for three business concepts that only need **user-entered names**:
-
-| Role | Meaning | Typical list types |
-|------|---------|-------------------|
-| `SOURCE` | Who we buy from | All stages |
-| `REQUESTED_BY` | Who requested the item | Procurement, purchase |
-| `STOCK_OWNER` | Who owns stock after acquisition | Acquired |
-
-```prisma
-model ListItemParty {
-  id         String
-  listItemId String
-  name       String    // free text only
-  role       PartyRole
-  createdAt  DateTime
-}
-```
-
-**Intentionally not modeled (deferred):**
-
-- Supplier registry, addresses, contacts
-- Organization/branch master data
-- `sourceId` / `requesterId` selection workflows
-
-**Rationale:** Operations today are name-driven (spreadsheet-style). A single `ListItemParty` table avoids duplicate modules (`Requester`, `StockOwner`, `Source`) while keeping queryable, copyable rows for workflow moves.
-
-### Multiple names per item
-
-One list item may have many sources and many requested-by (or stock-owner) names:
-
-```txt
-Cooking Oil
-  sources:      ABC Supplier, XYZ Imports
-  requestedBy:  Spintex Branch, Wholesale Client
-```
-
-Acquired example:
-
-```txt
-Basketball Pump
-  stockOwner: Main Warehouse, Tema Warehouse, Airport Branch
-```
-
-Names are trimmed and deduplicated case-insensitively on write.
+Its primary objective is to improve collaboration, accountability, traceability, and operational efficiency throughout the organization.
 
 ---
 
-## Workflow Lifecycle
+# Business Vision
 
-### Procurement list
+Every item requested within the system represents the creation of a Product.
 
-Staff create `WorkflowList` (`type: PROCUREMENT`) and add items with optional `sources` and `requestedBy` name arrays.
+A Product begins its lifecycle when it is requested and matures as different departments contribute information, decisions, approvals, inventory records, pricing, and merchandising content.
 
-### Purchase list
+Departments do not create separate products.
 
-`POST /list-items/move-to-purchase` copies items; **all party rows copy with the same roles**. Procurement rows stay unchanged.
+Departments enrich the same Product throughout its lifecycle.
 
-### Acquired list
-
-`POST /list-items/move-to-acquired` copies items and:
-
-- Preserves `SOURCE` names
-- Sets `STOCK_OWNER` from prior `REQUESTED_BY` names (and any existing `STOCK_OWNER` on the purchase item)
-
-This matches the business rule: “requested by” on early lists becomes “stock owner” after acquisition.
-
-### Rollback
-
-Soft-remove (`REMOVED`) on purchase or acquired items only. Upstream list items remain `ACTIVE`.
-
-### Inventory verification
-
-1. Inventory user opens **Acquired Lists** and selects a list.
-2. Grid shows all non-removed items (including previously verified) with expected quantity from the list item.
-3. User enters **actual quantity**, optional **notes**, and may correct **product name**, **image**, or **product details** when discrepancies are found (product updates are audited).
-4. **Verify** creates or updates an `InventoryVerification` record; matched counts may set list item status to `VERIFIED`.
-5. **Verification history** lists past records for the selected list (server-paginated).
-
-Mismatch statuses notify admins/procurement as before.
-
-### Password change (self-service)
-
-`PATCH /users/me/password` with `currentPassword` and `newPassword`. Current password is verified against the stored hash; refresh tokens are cleared; audit action `USER_PASSWORD_CHANGED` (no secrets in `oldValue`/`newValue`).
-
-### User deactivation (admin)
-
-UI confirmation shows user name and role before `PATCH /users/:id` with `isActive: false`.
-
-### Category on list items
-
-Category cell: type to filter existing categories or choose **Create "Name"** to `POST /categories` and assign immediately.
-
-### Audit timeline
-
-`GET /audit?page&limit&search` feeds both the audit table and timeline on the same page index. **View changes** diffs `oldValue` vs `newValue` (plain text default, JSON optional).
-
-### Sources / requestedBy persistence
-
-Values are stored as `ListItemParty` rows. Updates send full replacement arrays for the role via `PATCH /list-items/:id`. Grid editors commit string arrays with explicit AG Grid value setters.
-
-### SKU generation
-
-New catalog SKUs default to **5 characters** from `ABCDEFGHJKLMNPQRSTUVWXYZ23456789` when not provided.
+The Product remains the primary business entity from initial request through procurement, inventory verification, merchandising, and eventual sale.
 
 ---
 
-## Historical Preservation
+# Core Departments
 
-Moving forward **creates new `ListItem` rows** linked via `parentItemId`. Prior lists retain their items and party names forever.
+The system currently supports:
 
-Example:
+* Procurement
+* Warehouse Inventory
+* Merchandising
+* Marketing
+* Sales
+* Customer Experience & Support
+* Finance
+* Administration
 
-| List | Items |
-|------|-------|
-| Procurement | Pump, Rice, Milk |
-| Purchase | Pump, Rice |
-| Acquired | Pump |
-
----
-
-## API Contract
-
-### Create list item
-
-`POST /lists/:listId/items` (procurement lists only)
-
-```json
-{
-  "productId": "optional-existing",
-  "name": "Cooking Oil",
-  "categoryId": "...",
-  "procurementType": "LOCAL",
-  "unit": "L",
-  "quantity": 20,
-  "costPrice": 10,
-  "sources": ["ABC Supplier", "China Vendor"],
-  "requestedBy": ["Spintex Branch", "Wholesale Client"]
-}
-```
-
-### Update list item
-
-`PATCH /list-items/:id`
-
-Any of `sources`, `requestedBy`, `stockOwner` arrays **replaces** that role’s names when sent. Pricing and quantity fields update as before.
-
-### Response
-
-```json
-{
-  "id": "...",
-  "quantity": 20,
-  "product": { "name": "Cooking Oil", "sku": "..." },
-  "sources": ["ABC Supplier", "XYZ Vendor"],
-  "requestedBy": ["Spintex Branch"],
-  "stockOwner": []
-}
-```
-
-Internal `parties` relation is flattened in `formatListItem()` — clients never see raw party row IDs.
-
-### Removed endpoints
-
-- `GET/POST/PATCH /requesters`
-- `GET/POST/PATCH /stock-owners`
-
-Use list item payloads instead.
+Additional departments may be added as the platform evolves.
 
 ---
 
-## Pricing
+# Product Lifecycle
 
-`PricingService.calculatePricing(unitCostPrice, quantity)` fills `minimum20` / `minimum4` on list items when `costPrice` is set. Active rates live in `PricingSetting` (seeded defaults: 6% IF, 35% OP, etc.).
+A Product progresses through multiple business stages:
 
-`regularPrice`, `salesPrice`, `finalSellingPrice` remain manual commercial fields.
+Requested Item (RI)
 
----
+↓
 
-## Authorization
+Purchase List (PL)
 
-| Capability | ADMIN | PROCUREMENT | INVENTORY |
-|------------|:-----:|:-----------:|:---------:|
-| Lists + items + moves + rollback | ✓ | ✓ | ✗ |
-| View acquired lists / items | ✓ | ✓ | ✓ |
-| Update acquired item quantity | ✓ | ✗ | ✓ |
-| Verify acquired items | ✓ | ✗ | ✓ |
-| Change own password | ✓ | ✓ | ✓ |
-| Categories write | ✓ | ✗ | ✗ |
-| Users / audit / pricing admin | ✓ | ✗ | ✗ |
+↓
 
----
+Purchase Order (PO)
 
-## Audit & Notifications
+↓
 
-Workflow events log JSON snapshots including `sources` / `requestedBy` / `stockOwner` arrays on list items.
+Acquired List (AL)
 
-Notification types: `PROCUREMENT_LIST_CREATED`, `ITEM_MOVED_TO_PURCHASE`, `ACQUIRED_LIST_READY`, `VERIFICATION_MISMATCH`, etc.
+↓
 
-SSE: `lists.changed`, `list-items.changed`, `verifications.changed`.
+Awaiting Verification (AV)
 
----
+↓
 
-## Request Flow
+Goods Received List (GRL)
 
-```mermaid
-sequenceDiagram
-  participant Client
-  participant API as ListItemsService
-  participant DB as PostgreSQL
+↓
 
-  Client->>API: POST /lists/:id/items with sources[] requestedBy[]
-  API->>DB: ListItem + ListItemParty rows
-  Client->>API: POST /list-items/move-to-purchase
-  API->>DB: copy item + copy parties same_roles
-  Client->>API: POST /list-items/move-to-acquired
-  API->>DB: copy item + parties to_acquired
-```
+Merchandising
+
+↓
+
+Marketing
+
+↓
+
+Sales Ready
+
+Throughout this lifecycle, the Product accumulates information from different departments while maintaining a single identity and complete historical traceability.
 
 ---
 
-## Schema & Migrations
+# Procurement Workflow
 
-- Authoritative: [`backend/prisma/schema.prisma`](backend/prisma/schema.prisma)
-- `20260602120000_list_based_procurement`
-- `20260603120000_lightweight_list_item_parties` — migrates old `requesters` / `stock_owners` FKs into parties, then drops those tables
+## Requested Items (RI)
+
+The entry point for products entering the system.
+
+Sources include:
+
+* Department requests
+* POS low-stock triggers
+* POS out-of-stock triggers
+* E-commerce inventory triggers
+* Supplier API recommendations
+* Manual requests
+
+Each request creates or references a Product and records:
+
+* Source
+* Request reason
+* Requesting department
+* Creation date
+* Lifecycle status
 
 ---
 
-## Tech Stack
+## Purchase List (PL)
 
-**Backend:** NestJS 11, Prisma 7, PostgreSQL, class-validator  
+Procurement review and staging area.
 
-**Frontend:** Next.js App Router, AG Grid spreadsheets, TanStack Query, audit diff UI, verification workspace
+Procurement staff evaluate Requested Items and determine whether they should proceed toward purchasing.
+
+Department-submitted requests may be automatically forwarded to the Purchase List according to business rules.
 
 ---
 
-## Implementation Notes for Future Normalization
+## Purchase Order (PO)
 
-When supplier or branch registry is required:
+Formal purchasing workflow.
 
-- Introduce optional `externalId` on `ListItemParty` without breaking name-only clients
-- Or link parties to master tables while keeping `name` as display snapshot
+Supports:
 
-Current design optimizes for speed of entry and multi-value lists, not master-data governance.
+* Draft status
+* Pending Review status
+* Multi-department review
+* Disagreements and recommendations
+* Purchasing execution
+* Audit history
+
+Review participants include:
+
+* Procurement Manager
+* Marketing Manager
+* Sales Manager
+* Customer Experience Manager
+
+All comments, disagreements, responses, and decisions must remain permanently traceable.
+
+---
+
+## Acquired List (AL)
+
+Represents the actual items and quantities acquired during purchasing.
+
+The Acquired List becomes the handoff point to Warehouse Inventory for verification.
+
+---
+
+# Warehouse Verification Workflow
+
+## Awaiting Verification (AV)
+
+Warehouse Inventory receives:
+
+* Acquired List
+* Physical inventory
+
+Warehouse staff verify:
+
+* Product identity
+* Quantity
+* Condition
+* Specifications
+* Delivery accuracy
+
+---
+
+## Goods Received List (GRL)
+
+Represents officially verified inventory.
+
+Only verified quantities are considered valid inventory.
+
+The GRL serves as the organization's inventory source of truth.
+
+---
+
+# Merchandising Workflow
+
+Merchandising enriches Products after inventory verification.
+
+Responsibilities include:
+
+* Product details
+* Specifications
+* Attributes
+* Images
+* Categories
+* Documentation
+* Product descriptions
+
+Products become sales-ready after required merchandising information has been completed.
+
+---
+
+# AI Capabilities
+
+The platform supports AI-assisted content generation.
+
+AI may generate:
+
+* Product descriptions
+* Product tags
+* Marketing content
+* Promotional content
+* Blog content
+
+Generated content depends on the quality and completeness of product information maintained by the business.
+
+---
+
+# Finance & Pricing
+
+The platform supports:
+
+* Procurement cost tracking
+* Inventory valuation
+* Revenue reporting
+* Profitability analysis
+* Margin calculations
+* Pricing management
+
+Financial records must remain auditable and traceable.
+
+---
+
+# Core Principles
+
+## Product Is The Master Entity
+
+The Product is the primary business object within the system.
+
+All departments contribute to the Product lifecycle.
+
+---
+
+## Single Source of Truth
+
+Business information should exist in one authoritative location.
+
+Avoid duplicate records and conflicting data.
+
+---
+
+## Traceability
+
+All actions must be traceable from request through sale.
+
+Historical records must be preserved.
+
+---
+
+## Auditability
+
+Business-critical actions must maintain:
+
+* User attribution
+* Department attribution
+* Timestamps
+* Comments
+* Approvals
+* Disagreements
+* Responses
+
+---
+
+## Permission-Based Access
+
+Users may only perform actions allowed by their assigned roles and departments.
+
+---
+
+## Department Accountability
+
+Ownership and responsibility for actions must always be clear.
+
+---
+
+# Technology Stack
+
+Frontend:
+
+* Next.js
+* TypeScript
+* Tailwind CSS
+* shadcn/ui
+* AG Grid
+* TanStack Query
+
+Backend:
+
+* NestJS
+* Prisma
+* PostgreSQL
+
+Infrastructure:
+
+* Docker
+* GitHub Actions
+* Staging Environment
+* Production Environment
+
+---
+
+# Non-Negotiable Rules
+
+The system must preserve:
+
+* Product lifecycle integrity
+* Workflow traceability
+* Audit history
+* Approval history
+* Inventory accuracy
+* Financial accountability
+* Permission enforcement
+* Department ownership
+* Historical records
+
+No feature, workflow, or architectural change should violate these principles.

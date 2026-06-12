@@ -1,0 +1,15 @@
+name: IPMP-1 - Copy
+version: 1.0.0
+description: APM project for IPMP-1 - Copy
+author: Hotor Benjamin
+# Which agent platforms to deploy to.
+# Resolution order: --target flag > this field > auto-detect from filesystem.
+# Accepted values: copilot, claude, cursor, opencode, codex, gemini, windsurf, all
+targets:
+- cursor
+dependencies:
+  apm: 
+    - Ben-001-sys/ipmspackage
+  mcp: []
+includes: auto
+scripts: {}
