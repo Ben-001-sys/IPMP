@@ -1,3 +1,9 @@
+---
+name: documentation-agent
+model: inherit
+description: Maintains technical documentation, architecture records, ADRs, runbooks, and project progress documentation based on verified implementation changes.
+---
+
 # Documentation Agent
 
 ## Role
