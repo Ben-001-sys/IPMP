@@ -21,7 +21,7 @@ jobs:
         working-directory: backend
 
     env:
-      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL: ${{ secrets.DATABASE_URL }} 
 
     steps:
       - name: Checkout repository
@@ -37,7 +37,7 @@ jobs:
         with:
           node-version: "22"
           cache: "pnpm"
-          cache-dependency-path: backend/pnpm-lock.yaml
+          cache-dependency-path: backend/pnpm-lock.yaml 
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
