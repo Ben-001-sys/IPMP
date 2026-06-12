@@ -10,6 +10,24 @@
     "ag-mcp": {
       "command": "npx",
       "args": ["ag-mcp"]
-    }
+    },
+    "medusa": {
+      "url": "https://docs.medusajs.com/mcp",
+      "headers": {
+        "Authorization": "Bearer {token}"
+      }
+    },
+    "woocommerce_mcp": {
+        "type": "stdio",
+        "command": "npx",
+        "args": [
+          "-y",
+          "@automattic/mcp-wordpress-remote@latest"
+        ],
+        "env": {
+          "WP_API_URL": "https://yourstore.com/wp-json/woocommerce/mcp",
+          "CUSTOM_HEADERS": "{\"X-MCP-API-Key\": \"YOUR_CONSUMER_KEY:YOUR_CONSUMER_SECRET\"}"
+        }
+      }
   }
 }

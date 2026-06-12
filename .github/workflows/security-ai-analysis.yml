@@ -12,6 +12,10 @@ jobs:
     if: ${{ github.event.workflow_run.conclusion != 'cancelled' }}
     runs-on: ubuntu-latest
 
+    permissions:
+      contents: read
+      issues: write
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -32,14 +36,15 @@ jobs:
           node-version: "22"
 
       - name: Install AI analysis dependencies
-        run: npm install --no-save openai @slack/web-api
+        run: npm install --no-save openai
 
       - name: Run AI security analysis
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
-          SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_EVENT_NAME: workflow_run
+          GITHUB_EVENT_PATH: ${{ github.event_path }}
           GITHUB_SHA: ${{ github.event.workflow_run.head_sha }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-          PR_URL: ${{ github.event.workflow_run.html_url }}
+          GITHUB_RUN_ID: ${{ github.event.workflow_run.id }}
         run: node .github/scripts/ai-security-analysis.js

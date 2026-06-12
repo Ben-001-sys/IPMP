@@ -1,0 +1,19 @@
+lockfile_version: '1'
+generated_at: '2026-06-11T23:32:57.928793+00:00'
+apm_version: 0.18.0
+dependencies:
+- repo_url: Ben-001-sys/ipmspackage
+  host: github.com
+  resolved_commit: 9672aa7b711c0a649ff38fb57e73adb78c7a91fd
+  package_type: apm_package
+  deployed_files:
+  - .cursor/agents/architecture-agent.md
+  - .cursor/agents/developer-agent.md
+  - .cursor/agents/documentation-agent.md
+  - .cursor/agents/review-agent.md
+  deployed_file_hashes:
+    .cursor/agents/architecture-agent.md: sha256:8b5568f52d86e881f14da65cf10a07b9dcb968d55a2789a804fcc77ec8a885c3
+    .cursor/agents/developer-agent.md: sha256:a69056643fd412839133068fd7456fcb51596bf187fa7c0c7f43c251052efdbd
+    .cursor/agents/documentation-agent.md: sha256:020b5b3de36f87afde9ffd527fc1611ff282e5aafcc44a70dae9af28f1c1c13a
+    .cursor/agents/review-agent.md: sha256:edabc5b3356068b10f6fdee68ca81f19567fe242c8e3a24321b270d40ce4f0ad
+  content_hash: sha256:dd0a6f773bf8bb81c30e717d91e3488f3a117e0e10b6d6f1b4874dad48d058aa
