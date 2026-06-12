@@ -2,11 +2,13 @@ const fs = require("fs");
 const path = require("path");
 
 const { OpenAI } = require("openai");
-const { WebClient } = require("@slack/web-api");
 
 const SECURITY_REPORTS_DIR = path.resolve(process.cwd(), "security-reports");
 const MAX_FINDINGS_PER_TOOL = 10;
 const ALLOWED_RISKS = new Set(["CRITICAL", "HIGH", "MEDIUM", "LOW", "PASS"]);
+const AI_REPORT_MARKER = "<!-- ai-security-analysis -->";
+const GITHUB_API_BASE_URL = "https://api.github.com";
+const GITHUB_API_VERSION = "2022-11-28";
 
 function log(message, ...args) {
   console.log(`[ai-security-analysis] ${message}`, ...args);
@@ -28,6 +30,230 @@ function readJsonFile(filePath, label) {
   } catch (error) {
     warn(`Failed to parse ${label} at ${filePath}: ${error.message}`);
     return null;
+  }
+}
+
+function readGithubEventPayload() {
+  const eventPath = process.env.GITHUB_EVENT_PATH;
+
+  if (!eventPath || !fs.existsSync(eventPath)) {
+    return {};
+  }
+
+  try {
+    return JSON.parse(fs.readFileSync(eventPath, "utf8"));
+  } catch (error) {
+    warn(`Failed to read GitHub event payload: ${error.message}`);
+    return {};
+  }
+}
+
+function getRepositoryContext() {
+  const repository = process.env.GITHUB_REPOSITORY || "unknown/unknown";
+  const [owner = "unknown", repo = "unknown"] = repository.split("/");
+  const eventName = process.env.GITHUB_EVENT_NAME || "";
+  const eventPayload = readGithubEventPayload();
+
+  let commitSha = process.env.GITHUB_SHA || "unknown";
+  let pullRequestNumbers = [];
+
+  if (eventName === "pull_request") {
+    commitSha = eventPayload?.pull_request?.head?.sha || commitSha;
+    if (eventPayload?.pull_request?.number) {
+      pullRequestNumbers = [Number(eventPayload.pull_request.number)];
+    }
+  } else if (eventName === "workflow_run") {
+    commitSha = eventPayload?.workflow_run?.head_sha || commitSha;
+    const pullRequests = Array.isArray(
+      eventPayload?.workflow_run?.pull_requests,
+    )
+      ? eventPayload.workflow_run.pull_requests
+      : [];
+    pullRequestNumbers = pullRequests
+      .map((pullRequest) => Number(pullRequest?.number))
+      .filter((pullRequestNumber) => Number.isFinite(pullRequestNumber));
+  } else if (eventName === "push") {
+    commitSha = eventPayload?.after || commitSha;
+  }
+
+  return {
+    repository,
+    owner,
+    repo,
+    commitSha,
+    eventName,
+    pullRequestNumbers: [...new Set(pullRequestNumbers)],
+  };
+}
+
+function normalizeMarkdownText(value) {
+  return String(value || "")
+    .trim()
+    .replace(/\r\n/g, "\n");
+}
+
+function escapeMarkdownTableCell(value) {
+  return normalizeMarkdownText(value)
+    .replace(/\|/g, "\\|")
+    .replace(/\n/g, "<br>");
+}
+
+function formatMarkdownList(items, emptyMessage) {
+  if (!items.length) {
+    return `- ${emptyMessage}`;
+  }
+
+  return items.map((item) => `- ${normalizeMarkdownText(item)}`).join("\n");
+}
+
+function getDeploymentRecommendation(analysis) {
+  return analysis.blockDeployment
+    ? "Block deployment"
+    : "Proceed with deployment after standard review";
+}
+
+function buildReportMarkdown(analysis, context) {
+  return [
+    "# AI Security Analysis",
+    "",
+    "| Field | Value |",
+    "| --- | --- |",
+    `| Overall risk level | **${analysis.overallRisk}** |`,
+    `| Deployment recommendation | ${getDeploymentRecommendation(analysis)} |`,
+    `| Summary | ${escapeMarkdownTableCell(analysis.summary)} |`,
+    `| Repository | ${escapeMarkdownTableCell(context.repository)} |`,
+    `| Commit SHA | \`${escapeMarkdownTableCell(context.commitSha)}\` |`,
+    "",
+    "## Summary",
+    normalizeMarkdownText(analysis.summary),
+    "",
+    "## Top findings",
+    formatMarkdownList(
+      analysis.topFindings,
+      "No top findings were highlighted by the model.",
+    ),
+    "",
+    "## Remediation recommendations",
+    normalizeMarkdownText(analysis.recommendation),
+  ].join("\n");
+}
+
+function buildFailureReportMarkdown(error, context) {
+  return [
+    "# AI Security Analysis",
+    "",
+    "The AI analysis failed before a report could be generated.",
+    "",
+    "## Error",
+    "```",
+    normalizeMarkdownText(error?.message || "Unknown error"),
+    "```",
+    "",
+    "## Repository",
+    context.repository,
+    "",
+    "## Commit SHA",
+    `\`${context.commitSha}\``,
+  ].join("\n");
+}
+
+function writeJobSummary(markdown) {
+  const summaryPath = process.env.GITHUB_STEP_SUMMARY;
+
+  if (!summaryPath) {
+    warn("GITHUB_STEP_SUMMARY is missing; skipping job summary output.");
+    return;
+  }
+
+  try {
+    fs.appendFileSync(summaryPath, `${markdown.trimEnd()}\n`);
+    log(`Wrote AI security analysis to ${summaryPath}.`);
+  } catch (error) {
+    warn(`Failed to write job summary: ${error.message}`);
+  }
+}
+
+function buildGitHubApiUrl(pathname) {
+  return new URL(pathname, GITHUB_API_BASE_URL).toString();
+}
+
+async function githubApiRequest(method, pathname, token, body) {
+  const response = await fetch(buildGitHubApiUrl(pathname), {
+    method,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/vnd.github+json",
+      "X-GitHub-Api-Version": GITHUB_API_VERSION,
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+
+  const responseText = await response.text();
+
+  if (!response.ok) {
+    throw new Error(
+      `GitHub API request failed (${response.status} ${response.statusText}): ${responseText}`,
+    );
+  }
+
+  if (!responseText) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(responseText);
+  } catch {
+    return responseText;
+  }
+}
+
+async function upsertPullRequestComment(context, markdown) {
+  const githubToken = process.env.GITHUB_TOKEN;
+
+  if (!githubToken) {
+    warn("GITHUB_TOKEN is missing; skipping PR comment.");
+    return;
+  }
+
+  if (!context.pullRequestNumbers.length) {
+    return;
+  }
+
+  const commentBody = `${AI_REPORT_MARKER}\n\n${markdown}`;
+
+  for (const pullRequestNumber of context.pullRequestNumbers) {
+    const comments = await githubApiRequest(
+      "GET",
+      `/repos/${context.owner}/${context.repo}/issues/${pullRequestNumber}/comments?per_page=100`,
+      githubToken,
+    );
+
+    const existingComment = Array.isArray(comments)
+      ? comments.find(
+          (comment) =>
+            typeof comment?.body === "string" &&
+            comment.body.includes(AI_REPORT_MARKER),
+        )
+      : null;
+
+    if (existingComment) {
+      await githubApiRequest(
+        "PATCH",
+        `/repos/${context.owner}/${context.repo}/issues/comments/${existingComment.id}`,
+        githubToken,
+        { body: commentBody },
+      );
+      log(`Updated AI Security Analysis PR comment on #${pullRequestNumber}.`);
+      continue;
+    }
+
+    await githubApiRequest(
+      "POST",
+      `/repos/${context.owner}/${context.repo}/issues/${pullRequestNumber}/comments`,
+      githubToken,
+      { body: commentBody },
+    );
+    log(`Created AI Security Analysis PR comment on #${pullRequestNumber}.`);
   }
 }
 
@@ -281,8 +507,7 @@ async function analyzeWithOpenAI(trivyFindings, semgrepFindings) {
   const apiKey = process.env.OPENAI_API_KEY;
 
   if (!apiKey) {
-    warn("OPENAI_API_KEY is missing; using fallback analysis.");
-    return computeFallbackAnalysis(trivyFindings, semgrepFindings);
+    throw new Error("OPENAI_API_KEY is missing.");
   }
 
   const client = new OpenAI({ apiKey });
@@ -324,10 +549,7 @@ async function analyzeWithOpenAI(trivyFindings, semgrepFindings) {
     const parsed = JSON.parse(content);
     return sanitizeAnalysis(parsed, trivyFindings, semgrepFindings);
   } catch (error) {
-    warn(
-      `OpenAI analysis failed; falling back to deterministic analysis: ${error.message}`,
-    );
-    return computeFallbackAnalysis(trivyFindings, semgrepFindings);
+    throw new Error(`OpenAI analysis failed: ${error.message}`);
   }
 }
 
@@ -369,181 +591,41 @@ function sanitizeAnalysis(analysis, trivyFindings, semgrepFindings) {
   };
 }
 
-function getRiskColor(overallRisk) {
-  switch (overallRisk) {
-    case "CRITICAL":
-      return "#dc2626";
-    case "HIGH":
-      return "#ea580c";
-    case "MEDIUM":
-      return "#ca8a04";
-    case "LOW":
-    case "PASS":
-    default:
-      return "#16a34a";
-  }
-}
-
-function formatList(items, emptyMessage) {
-  if (!items.length) {
-    return emptyMessage;
-  }
-
-  return items.map((item) => `• ${item}`).join("\n");
-}
-
-function buildSlackMessage(analysis) {
-  const repository = process.env.GITHUB_REPOSITORY || "unknown/repository";
-  const commitSha = process.env.GITHUB_SHA || "unknown";
-  const commitUrl = `https://github.com/${repository}/commit/${commitSha}`;
-  const pullRequestUrl = process.env.PR_URL || "";
-  const deploymentRecommendation = analysis.blockDeployment
-    ? "Block deployment recommended by AI, but deployment is not automatically blocked."
-    : "Deployment is not blocked by the AI analysis layer.";
-
-  const headerText = `AI Security Analysis: ${analysis.overallRisk}`;
-  const topFindingsText = formatList(
-    analysis.topFindings,
-    "• No top findings were highlighted by the model.",
-  );
-
-  const blocks = [
-    {
-      type: "header",
-      text: {
-        type: "plain_text",
-        text: headerText,
-      },
-    },
-    {
-      type: "section",
-      fields: [
-        {
-          type: "mrkdwn",
-          text: `*Risk Level*\n${analysis.overallRisk}`,
-        },
-        {
-          type: "mrkdwn",
-          text: `*Deployment Recommendation*\n${deploymentRecommendation}`,
-        },
-        {
-          type: "mrkdwn",
-          text: `*Repository*\n${repository}`,
-        },
-        {
-          type: "mrkdwn",
-          text: `*Commit SHA*\n${commitSha}`,
-        },
-      ],
-    },
-    {
-      type: "section",
-      text: {
-        type: "mrkdwn",
-        text: `*Summary*\n${analysis.summary}`,
-      },
-    },
-    {
-      type: "section",
-      text: {
-        type: "mrkdwn",
-        text: `*Top Findings*\n${topFindingsText}`,
-      },
-    },
-    {
-      type: "section",
-      text: {
-        type: "mrkdwn",
-        text: `*Remediation Steps*\n${analysis.recommendation}`,
-      },
-    },
-    {
-      type: "section",
-      text: {
-        type: "mrkdwn",
-        text: `*Recommendation*\n${analysis.recommendation}`,
-      },
-    },
-  ];
-
-  if (pullRequestUrl) {
-    blocks.push({
-      type: "context",
-      elements: [
-        {
-          type: "mrkdwn",
-          text: `Pull request: <${pullRequestUrl}|Open PR>`,
-        },
-      ],
-    });
-  }
-
-  blocks.push({
-    type: "actions",
-    elements: [
-      {
-        type: "button",
-        text: {
-          type: "plain_text",
-          text: "View Commit",
-        },
-        url: commitUrl,
-      },
-    ],
-  });
-
-  return {
-    attachments: [
-      {
-        color: getRiskColor(analysis.overallRisk),
-        blocks,
-      },
-    ],
-    text: `${headerText} - ${analysis.summary}`,
-  };
-}
-
-async function sendSlackReport(analysis) {
-  const slackBotToken = process.env.SLACK_BOT_TOKEN;
-  const slackChannelId = process.env.SLACK_CHANNEL_ID;
-
-  if (!slackBotToken || !slackChannelId) {
-    warn("Slack configuration is incomplete; skipping Slack notification.");
-    return;
-  }
-
-  const client = new WebClient(slackBotToken);
-
-  try {
-    await client.chat.postMessage({
-      channel: slackChannelId,
-      ...buildSlackMessage(analysis),
-    });
-
-    log("Slack notification sent.");
-  } catch (error) {
-    warn(`Slack notification failed: ${error.message}`);
-  }
-}
-
 async function main() {
   log(`Reading security reports from ${SECURITY_REPORTS_DIR}`);
 
+  const context = getRepositoryContext();
   const { trivyFindings, semgrepFindings } = collectFindings();
-  const analysis = await analyzeWithOpenAI(trivyFindings, semgrepFindings);
+  try {
+    const analysis = await analyzeWithOpenAI(trivyFindings, semgrepFindings);
 
-  if (analysis.blockDeployment === true) {
-    warn(
-      "AI recommends blocking deployment, but deployment is not automatically blocked.",
-    );
+    if (analysis.blockDeployment === true) {
+      warn(
+        "AI recommends blocking deployment, but deployment is not automatically blocked.",
+      );
+    }
+
+    log(`Final risk level: ${analysis.overallRisk}`);
+    log(`Summary: ${analysis.summary}`);
+
+    const reportMarkdown = buildReportMarkdown(analysis, context);
+    writeJobSummary(reportMarkdown);
+
+    if (context.pullRequestNumbers.length) {
+      try {
+        await upsertPullRequestComment(context, reportMarkdown);
+      } catch (error) {
+        warn(`PR comment failed: ${error.message}`);
+      }
+    }
+  } catch (error) {
+    const failureMarkdown = buildFailureReportMarkdown(error, context);
+    writeJobSummary(failureMarkdown);
+    throw error;
   }
-
-  log(`Final risk level: ${analysis.overallRisk}`);
-  log(`Summary: ${analysis.summary}`);
-
-  await sendSlackReport(analysis);
 }
 
 main().catch((error) => {
   warn(`Unexpected error in AI security analysis: ${error.message}`);
+  process.exitCode = 1;
 });
